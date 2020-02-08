@@ -3,7 +3,8 @@ from scrapy import Spider, Request
 from bs4 import BeautifulSoup
 import re
 import json
-from ..items import NCovOverall
+from ..items import NCovOverall, NCovProvince, NCovArea
+import datetime
 
 country_type = {
     1: '中国'
@@ -20,8 +21,11 @@ class DxySpider(Spider):
 
     def __init__(self):
         self.crawl_timestamp = int()
+        self.crawl_date = ""
 
     def start_requests(self):
+        self.crawl_timestamp = int(datetime.datetime.timestamp(datetime.datetime.now()) * 1000)
+        self.crawl_date = datetime.date.today().strftime("%Y-%m-%d")
         for url in self.start_urls:
             yield Request(url=url, callback=self.parse, headers=self.header)
 
@@ -36,26 +40,20 @@ class DxySpider(Spider):
         abroad_information = re.search(r'\[(.*)\]',
                                        str(soup.find('script', attrs={'id': 'getListByCountryTypeService2'})))
         news = re.search(r'\[(.*?)\]', str(soup.find('script', attrs={'id': 'getTimelineService'})))
-        item = self.overall_parser(overall_information=overall_information)
-        yield item
-        # self.province_parser(province_information=province_information)
-        # self.area_parser(area_information=area_information)
-        # self.abroad_parser(abroad_information=abroad_information)
+        yield self.overall_parser(overall_information=overall_information)
+        for item in self.province_parser(province_information=province_information):
+            yield item
+        for item in self.area_parser(area_information=area_information):
+            yield item
+        self.abroad_parser(abroad_information=abroad_information)
         # self.news_parser(news=news)
         return
 
-
     def overall_parser(self, overall_information):
         overall_information = json.loads(overall_information.group(0))
-        overall_information.pop('id')
-        overall_information.pop('createTime')
-        overall_information.pop('modifyTime')
-        overall_information.pop('imgUrl')
-        overall_information.pop('deleted')
-        overall_information['countRemark'] = overall_information['countRemark'].replace(' 疑似', '，疑似').replace(' 治愈',
-                                                                                                              '，治愈').replace(
-            ' 死亡', '，死亡').replace(' ', '')
         item = NCovOverall()
+        item["crawlTS"] = self.crawl_timestamp
+        item["crawlDate"] = self.crawl_date
         # count
         item["confirmedCount"] = overall_information["confirmedCount"]
         item["suspectedCount"] = overall_information["suspectedCount"]
@@ -68,31 +66,48 @@ class DxySpider(Spider):
         item["curedIncr"] = overall_information["curedIncr"]
         item["deadIncr"] = overall_information["deadIncr"]
         item["seriousIncr"] = overall_information["seriousIncr"]
-        print(item)
         return item
 
-
-
     def province_parser(self, province_information):
+        items = []
         provinces = json.loads(province_information.group(0))
         for province in provinces:
-            province.pop('id')
-            province.pop('tags')
-            province.pop('sort')
-            province['comment'] = province['comment'].replace(' ', '')
-            province['crawlTime'] = self.crawl_timestamp
-            province['country'] = country_type.get(province['countryType'])
-            print("province = ", province)
+            item = NCovProvince()
+            item["crawlTS"] = self.crawl_timestamp
+            item["crawlDate"] = self.crawl_date
+            item["locationId"] = province["locationId"]
+            item["countryType"] = province["countryType"]
+            item["country"] = country_type.get(province['countryType'])
+            item["provinceId"] = province["provinceId"]
+            item["provinceName"] = province["provinceName"]
+            item["confirmedCount"] = province["confirmedCount"]
+            item["confirmedCount"] = province["confirmedCount"]
+            item["suspectedCount"] = province["suspectedCount"]
+            item["curedCount"] = province["curedCount"]
+            item["deadCount"] = province["deadCount"]
+            items.append(item)
+        return items
 
     def area_parser(self, area_information):
+        items = []
         area_information = json.loads(area_information.group(0))
         for area in area_information:
-            area['comment'] = area['comment'].replace(' ', '')
-            area['country'] = '中国'
-            area['updateTime'] = self.crawl_timestamp
-            print("area = ", area)
+            for city_info in area['cities']:
+                item = NCovArea()
+                item["provinceName"] = area["provinceName"]
+                item["crawlTS"] = self.crawl_timestamp
+                item["crawlDate"] = self.crawl_date
+                item["cityName"] = city_info["cityName"]
+                item["locationId"] = city_info["locationId"]
+                item["confirmedCount"] = city_info["confirmedCount"]
+                item["suspectedCount"] = city_info["suspectedCount"]
+                item["curedCount"] = city_info["curedCount"]
+                item["deadCount"] = city_info["deadCount"]
+                items.append(item)
+        return items
 
     def abroad_parser(self, abroad_information):
+        cccc = 0
         countries = json.loads(abroad_information.group(0))
         for country in countries:
             country.pop('id')
@@ -105,7 +120,9 @@ class DxySpider(Spider):
             country.pop('sort')
             country['comment'] = country['comment'].replace(' ', '')
             country['updateTime'] = self.crawl_timestamp
-            print("country = ", country)
+            if cccc == 0:
+                cccc = cccc + 1
+                print("country = ", country)
 
     def news_parser(self, news):
         news = json.loads(news.group(0))
